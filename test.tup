@@ -1,0 +1,51 @@
+// entry point of the program
+main = (args: []String) => () {
+	// single line comment
+	```
+block comment
+	```
+
+	a := ? // variable declaration
+
+	a <- 10 // variable assignment
+	a <- "" // compilation error as a has type of Int32
+
+	_ = a // discard declaration
+
+	// :: is type casting
+	b : Float32 = ?  // variable declaration with type
+	b <- 10 // compilation error
+	b <- 10 :: Float32 // Good
+
+	c := (10, "string", 1.0e2) // c is a tuple, c has type (Int32, String, Float32)
+	_ = c.0 // accessing element of a tuple
+	_ = c.3 // compilation error
+	c._1 <- "hello world" // reassign element at index 1
+	
+
+	// named tuple
+	person = (
+		first = "John",
+		last = "Doe",
+		age: 20,
+	)
+	// pattern match which tuple element
+	(first, last) ~:= person // lhs is mutable
+	(first2 as first, last2 as last) ~= person // aliasing, first2, last2 is immutable
+
+	// mulitple variables declaration
+	a1, a2, a3 = 10, "string", true
+
+	 // array is similar to tuple, however all elements must have the same type
+	immutable_array = [1, 2, 3]
+	dynamic_size_array := ?["1", "2", "3"] // which is the same as 'dynamic_size_array: [?]String = ["1", "2", "3"]'
+	fixed_size_array := [4, 5, 6]
+
+	print(full_name $ person)                    // "John Doe"
+	print(full_name(first: "John", last: "Doe")) // "John Doe"
+	print(full_name("John", "Doe"))              // "John Doe"
+}
+
+full_name = (first: String, last: String) => String {
+	return first + " " + last
+}
