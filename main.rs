@@ -38,7 +38,7 @@ enum Kind {
 impl Kind {
     pub const Mul: Kind = Kind::Asterisk;
     pub const Mod: Kind = Kind::Percentage;
-    pub const Div: Kind = Kind::Div;
+    pub const Div: Kind = Kind::Slash;
 }
 
 enum LexerError {
@@ -56,12 +56,16 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn next_token(&mut self) -> Result<Token, LexerError> {
-        self.next_kind().map(|kind| Token{ kind })
+    pub fn next_token(&mut self) -> Token {
+        Token{
+            kind: self.next_kind(),
+        }
     }
 
-    fn next_kind(&mut self) -> Result<Kind, LexerError>{
-        loop {
+    fn next_kind(&mut self) -> Kind {
+        let mut unknown_lexeme = "".to_owned();
+
+        let kind = loop {
             // skip whitespace
             if let Some(_) = self.peek().filter(|&c| c.is_whitespace()) {
                 self.next();
@@ -80,19 +84,25 @@ impl<'a> Lexer<'a> {
             }
 
             if let Some(kind) = self.match_ident_or_keyword_or_bool_literal() {
-                break Ok(kind);
+                break kind;
             } else if let Some(kind) = self.match_number_literal() {
-                break Ok(kind);
+                break kind;
             } else if let Some(kind) = self.match_symbol() {
-                break Ok(kind);
-            } else if let Some(res) = self.match_string_literal() {
-                break Ok(Kind::Eof);
+                break kind;
+            } else if let Some(kind) = self.match_string_literal() {
+                break kind;
             } else if let None = self.peek() {
-                break Ok(Kind::Eof);
+                break Kind::Eof;
             } else {
-                break Err(LexerError::UnknownToken("".to_owned()));
+                unknown_lexeme.push(self.next().unwrap());
             }
+        };
+
+        if unknown_lexeme.len() > 0 {
+            eprintln!("unkown token: {}", unknown_lexeme);
         }
+
+        kind
     }
 
     fn next(&mut self) -> Option<char> {
@@ -205,10 +215,12 @@ impl<'a> Lexer<'a> {
         lexeme
     }
 
-    fn match_string_literal(&mut self) -> Result<Kind, LexerError> {
-        if !self.match_str("\"") {
+    fn match_string_literal(&mut self) -> Option<Kind> {
+        if let None = self.peek().filter(|&c| c == '"') {
             return None;
         }
+
+        self.next();
 
         let mut string_content = "".to_string();
 
@@ -230,7 +242,7 @@ impl<'a> Lexer<'a> {
                 }
 
                 if !is_valid_escaped_char {
-                    return Err(LexerError::InvalidEscapedChar);
+                    eprintln!("invalid escaped char");
                 }
 
                 continue;
@@ -239,16 +251,16 @@ impl<'a> Lexer<'a> {
             string_content.push(c);
             self.next();
         }
-
+        
         if let None = self.peek() {
-            return Err(LexerError::UnclosedString);
+            eprintln!("unclosed string literal error");
         }
 
         if let Some(_) = self.peek().filter(|&c| c == '\n') {
-            return Err(LexerError::UnclosedString);
+            eprintln!("unclosed string literal error");
         }
 
-        Ok(Kind::StringLit(string_content))
+        Some(Kind::StringLit(string_content))
     }
 
     fn match_ident_or_keyword_or_bool_literal(&mut self) -> Option<Kind> {
@@ -284,12 +296,17 @@ impl<'a> Lexer<'a> {
     }
 
     fn match_str(&mut self, s: &str) -> bool {
+        if s.chars().count() > self.chars.clone().count() {
+            return false;
+        }
+
         let ok = self.chars.clone().zip(s.chars()).all(|(c1, c2)| c1 == c2);
         if ok {
             for _ in 0 .. s.chars().count() {
                 self.next();
             }
         }
+
         ok
     }
 
@@ -306,7 +323,7 @@ impl<'a> Lexer<'a> {
     
 }
 
-/*
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,38 +331,47 @@ mod tests {
     #[test]
     fn test_lexer() {
         let source = "true ```this is a comment```false  identifier _ _123".to_owned();
-        let mut l = Lexer::new(&source);
+        // let source = "true false  identifier _ _123".to_owned();
 
-        let expected = [
+        let mut error_buf = Vec::<String>::new();
+        let mut l = Lexer::new(&source, &mut error_buf);
+
+        let expected_kinds = [
             Kind::BoolLit(true),
             Kind::BoolLit(false),
             Kind::Ident("identifier".to_string()),
             Kind::Discard,
             Kind::Ident("_123".to_string()),
             Kind::Eof,
-        ]
+        ];
 
-        
-        assert_eq!(l.next_token().kind, Kind::BoolLit(true));
-        assert_eq!(l.next_token().kind, Kind::BoolLit(false));
-        assert_eq!(l.next_token().kind, Kind::Ident("identifier".to_string()));
-        assert_eq!(l.next_token().kind, Kind::Discard);
-        assert_eq!(l.next_token().kind, Kind::Ident("_123".to_string()));
-        assert_eq!(l.next_token().kind, Kind::Eof);
+        for expect in expected_kinds {
+            let got = l.next_token().kind;
+            assert_eq!(expect, got);
+        }
     }
 
     #[test]
     fn test_lexer_num_literal() {
         let source = "1234 12.34 012 1e2 1e002 123.456e-0001".to_owned();
-        let mut l = Lexer::new(&source);
-        assert_eq!(l.next_token().kind, Kind::IntLit(1234));
-        assert_eq!(l.next_token().kind, Kind::FloatLit(f64::from_str("12.34").unwrap()));
-        assert_eq!(l.next_token().kind, Kind::IntLit(0));
-        assert_eq!(l.next_token().kind, Kind::IntLit(12));
-        assert_eq!(l.next_token().kind, Kind::FloatLit(f64::from_str("1e2").unwrap()));
-        assert_eq!(l.next_token().kind, Kind::FloatLit(f64::from_str("1e002").unwrap()));
-        assert_eq!(l.next_token().kind, Kind::FloatLit(f64::from_str("123.456e-0001").unwrap()));
-        assert_eq!(l.next_token().kind, Kind::Eof);
+        let mut error_buf = Vec::<String>::new();
+        let mut l = Lexer::new(&source, &mut error_buf);
+
+        let expected_kinds = [
+            Kind::IntLit(1234),
+            Kind::FloatLit(f64::from_str("12.34").unwrap()),
+            Kind::IntLit(0),
+            Kind::IntLit(12),
+            Kind::FloatLit(f64::from_str("1e2").unwrap()),
+            Kind::FloatLit(f64::from_str("1e002").unwrap()),
+            Kind::FloatLit(f64::from_str("123.456e-0001").unwrap()),
+            Kind::Eof,
+        ];
+
+        for expect in expected_kinds {
+            let got = l.next_token().kind;
+            assert_eq!(expect, got);
+        }
     }
 
     #[test]
@@ -353,7 +379,7 @@ mod tests {
         let source = "".to_owned();
     }
 }
-*/
+
 
 fn main() {
     let source_path = "test.tup";
