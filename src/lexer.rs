@@ -4,6 +4,7 @@ const SINGLE_QUOTE: char = '\'';
 const DOUBLE_QUOTE: char = '"';
 const BACKSLASH: char = '\\';
 
+#[derive(Debug, PartialEq)]
 enum Token<'a> {
     Identifier(&'a str),
     IntLit(&'a str),
@@ -85,14 +86,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn peek(&self) -> Option<char> {
-        let mut chars = self.chars.clone();
-        while let c = chars.next()? {
-            if !c.is_whitespace() {
-                return Some(c);
-            }
-        }
-
-        unreachable!()
+        self.chars.clone().next()
     }
 
     fn is_eof(&self) -> bool {
@@ -100,19 +94,17 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn bump(&mut self) -> Option<char> {
-        while let c = self.chars.next()? {
-            self.pos += c.len_utf8();
-            self.col += 1;
-            if !c.is_whitespace() {
-                return Some(c);
-            }
-            if c == '\n' {
-                self.line += 1;
-                self.col = 1;
-            }
+        let c = self.chars.next()?;
+
+        self.pos += c.len_utf8();
+        self.col += 1;
+
+        if c == '\n' {
+            self.line += 1;
+            self.col = 1;
         }
 
-        unreachable!()
+        Some(c)
     }
 
     fn bump_if(&mut self, predicate: impl FnOnce(char) -> bool) -> Option<char> {
@@ -146,13 +138,7 @@ impl<'a> Tokenizer<'a> {
 
         let offset = self.pos;
 
-        while let Some(c) = self.peek() {
-            if !c.is_ascii_digit() {
-                break;
-            }
-
-            self.bump();
-        }
+        self.bump_while(|c| c.is_ascii_digit());
 
         let mut scan_fraction = false;
         let mut scan_exp = false;
@@ -178,13 +164,7 @@ impl<'a> Tokenizer<'a> {
 
         if scan_fraction {
             let pos = self.pos;
-            while let Some(c) = self.peek() {
-                if !c.is_ascii_digit() {
-                    break;
-                }
-
-                self.bump();
-            }
+            self.bump_while(|c| c.is_ascii_digit());
 
             let bumped = pos == self.pos;
             if !bumped {
@@ -199,13 +179,7 @@ impl<'a> Tokenizer<'a> {
         }
 
         if scan_exp {
-            while let Some(c) = self.peek() {
-                if !c.is_ascii_digit() {
-                    break;
-                }
-
-                self.bump();
-            }
+            self.bump_while(|c| c.is_ascii_digit());
         }
 
         let literal = &self.src[offset..self.pos];
@@ -216,12 +190,14 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn match_identifier(&mut self, begin: char) -> Option<Token<'a>> {
+    fn match_identifier(&mut self, offset: usize, begin: char) -> Option<Token<'a>> {
         if !(begin.is_alphabetic() || begin == '_') {
             return None;
         }
+        self.bump_while(|c| c.is_alphanumeric() || c == '_');
 
-        Some(self.take_while(|c| c.is_alphanumeric() || c == '_').into())
+        let token: Token<'a> = (&self.src[offset..self.pos]).into();
+        Some(token)
     }
 
     fn match_char(&mut self, begin: char) -> Option<Token<'a>> {
@@ -299,7 +275,7 @@ impl<'a> Iterator for Tokenizer<'a> {
 
         let c = self.bump()?;
 
-        if let Some(t) = self.match_identifier(c) {
+        if let Some(t) = self.match_identifier(offset, c) {
             return Some(t);
         }
 
@@ -358,6 +334,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                 self.bump();
                 return Some(token);
             }
+            Skip => {}
             _ => return Some(token),
         }
 
@@ -383,4 +360,24 @@ enum LexerErrorKind<'a> {
     InvalidEscapedChar,
     UnclosedStringLiteral,
     IllegalLiteral(&'a str),
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lexer::Token::{Discard, Identifier};
+    use super::*;
+
+    #[test]
+    fn test_identifiers() {
+        let input = "foobar v_a_z1234 _";
+        let tokenizer = Tokenizer::new(input);
+        assert_eq!(
+            vec![
+                Identifier("foobar"),
+                Identifier("v_a_z1234"),
+                Discard,
+            ],
+            tokenizer.collect::<Vec<Token>>(),
+        );
+    }
 }
