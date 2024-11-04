@@ -64,6 +64,7 @@ impl<'a> From<&'a str> for Token<'a> {
     }
 }
 
+#[derive(Debug)]
 struct Tokenizer<'a> {
     line: usize,
     col: usize,
@@ -77,7 +78,7 @@ impl<'a> Tokenizer<'a> {
     fn new(src: &'a str) -> Self {
         Tokenizer {
             line: 1,
-            col: 1,
+            col: 0,
             pos: 0,
             src,
             chars: src.chars(),
@@ -122,65 +123,33 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn take_while(&mut self, mut predicate: impl FnMut(char) -> bool) -> &'a str {
-        let old_pos = self.pos;
-        while !self.is_eof() && predicate(self.peek().unwrap()) {
-            self.bump();
-        }
-
-        &self.src[old_pos..self.pos]
-    }
-
-    fn match_number(&mut self, begin: char) -> Option<Token<'a>> {
+    fn match_number(&mut self, offset: usize, begin: char) -> Option<Token<'a>> {
         if !begin.is_ascii_digit() {
             return None;
         }
 
-        let offset = self.pos;
-
         self.bump_while(|c| c.is_ascii_digit());
 
-        let mut scan_fraction = false;
-        let mut scan_exp = false;
-
-        self.peek().map(|c| {
-            if c == '.' {
-                scan_fraction = true;
-                return true;
-            }
-
-            if c == 'e' || c == 'E' {
-                scan_exp = true;
-                return true;
-            }
-
-            false
-        });
-
-        let is_float = scan_fraction || scan_exp;
-        if is_float {
-            self.bump();
-        }
+        let scan_fraction = self
+            .peek()
+            .map_or(false, |c| c == '.');
 
         if scan_fraction {
-            let pos = self.pos;
+            self.bump();
             self.bump_while(|c| c.is_ascii_digit());
-
-            let bumped = pos == self.pos;
-            if !bumped {
-                return Some(Token::FloatLit(&self.src[offset..self.pos]));
-            }
-
-            scan_exp = self.peek().map_or(false, |c| c == 'e' || c == 'E');
-            if scan_exp {
-                self.bump();
-                self.bump_if(|c| c == '+' || c == '-');
-            }
         }
+
+        let scan_exp = self
+            .peek()
+            .map_or(false, |c| c == 'e' || c == 'E');
 
         if scan_exp {
+            self.bump();
+            self.bump_if(|c| c == '+' || c == '-');
             self.bump_while(|c| c.is_ascii_digit());
         }
+
+        let is_float = scan_fraction || scan_exp;
 
         let literal = &self.src[offset..self.pos];
         if is_float {
@@ -205,12 +174,26 @@ impl<'a> Tokenizer<'a> {
             return None;
         }
 
-        let next_char = self.bump()?;
+        let offset = self.pos;
+
+        let next_char = match self.bump() {
+            Some(c) => c,
+            _ => {
+                self.errors.push(LexerError::new(
+                    self.line,
+                    self.pos,
+                    LexerErrorKind::UnclosedCharLiteral,
+                ));
+                return Some(Token::CharLit(""));
+            }
+        };
+
         if next_char == SINGLE_QUOTE {
+            self.errors.push(LexerError::new(self.line, self.col, LexerErrorKind::EmptyCharLiteral));
             return Some(Token::CharLit(""));
         }
 
-        let token = Token::CharLit(&self.src[self.pos..self.pos + 1]);
+        let token = Token::CharLit(&self.src[offset..self.pos]);
 
         match self.peek() {
             Some(c) if c == SINGLE_QUOTE => {
@@ -237,30 +220,41 @@ impl<'a> Tokenizer<'a> {
         let offset = self.pos;
 
         while let Some(c) = self.peek() {
-            if cur_char == BACKSLASH && ![SINGLE_QUOTE, DOUBLE_QUOTE, BACKSLASH, 'n', 'r', 't', 'b', 'f', 'v', '0'].contains(&c) {
-                self.errors.push(LexerError::new(self.line, self.col + 1, LexerErrorKind::InvalidEscapedChar))
+            if cur_char == BACKSLASH && ![DOUBLE_QUOTE, BACKSLASH, 'n', 'r', 't', '0'].contains(&c)
+            {
+                self.errors.push(LexerError::new(
+                    self.line,
+                    self.col,
+                    LexerErrorKind::InvalidEscapedChar,
+                ))
             }
 
             let is_escaped_double_quote = cur_char == BACKSLASH && c == DOUBLE_QUOTE;
 
             cur_char = c;
 
-            self.bump();
-
             if !(is_escaped_double_quote || (c != DOUBLE_QUOTE && c != '\n')) {
                 break;
             }
+
+            self.bump();
         }
 
+        let next_char = cur_char;
         let literal = &self.src[offset..self.pos];
 
-        if cur_char == '\n' || self.peek().is_none() {
-            self.errors.push(LexerError::new(self.line, self.col, LexerErrorKind::UnclosedStringLiteral))
+        if next_char == '\n' || self.peek().is_none() {
+            self.errors.push(LexerError::new(
+                self.line,
+                self.col,
+                LexerErrorKind::UnclosedStringLiteral,
+            ))
+        } else {
+            debug_assert!(next_char == DOUBLE_QUOTE);
+            self.bump();
         }
 
-        let token = Token::from(literal);
-
-        Some(token)
+        Some(Token::StringLit(literal))
     }
 }
 
@@ -268,8 +262,8 @@ impl<'a> Iterator for Tokenizer<'a> {
     type Item = Token<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        use Token::*;
         use LexerErrorKind::*;
+        use Token::*;
 
         let offset = self.pos;
 
@@ -287,7 +281,7 @@ impl<'a> Iterator for Tokenizer<'a> {
             return Some(t);
         }
 
-        if let Some(t) = self.match_number(c) {
+        if let Some(t) = self.match_number(offset, c) {
             return Some(t);
         }
 
@@ -296,11 +290,11 @@ impl<'a> Iterator for Tokenizer<'a> {
             '>' => match self.peek() {
                 Some('=') => Gte,
                 _ => Gt,
-            }
+            },
             '<' => match self.peek() {
                 Some('=') => Lte,
                 _ => Lt,
-            }
+            },
             '/' => match self.peek() {
                 Some('/') => {
                     self.bump_while(|c| c != '\n');
@@ -308,7 +302,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                 }
                 Some('=') => Neq,
                 _ => Slash,
-            }
+            },
             '+' => Plus,
             '-' => Minus,
             '*' => Star,
@@ -328,7 +322,11 @@ impl<'a> Iterator for Tokenizer<'a> {
 
         match token {
             Illegal => {
-                self.errors.push(LexerError::new(self.line, offset, IllegalLiteral(&self.src[offset..self.pos])));
+                self.errors.push(LexerError::new(
+                    self.line,
+                    offset,
+                    IllegalLiteral(&self.src[offset..self.pos]),
+                ));
             }
             Gte | Lte | Neq => {
                 self.bump();
@@ -342,6 +340,7 @@ impl<'a> Iterator for Tokenizer<'a> {
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct LexerError<'a> {
     line: usize,
     col: usize,
@@ -354,6 +353,7 @@ impl<'a> LexerError<'a> {
     }
 }
 
+#[derive(Debug, PartialEq)]
 enum LexerErrorKind<'a> {
     UnclosedCharLiteral,
     EmptyCharLiteral,
@@ -364,20 +364,141 @@ enum LexerErrorKind<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::lexer::Token::{Discard, Identifier};
     use super::*;
 
     #[test]
     fn test_identifiers() {
+        use crate::lexer::Token::{Discard, Identifier};
+
         let input = "foobar v_a_z1234 _";
         let tokenizer = Tokenizer::new(input);
         assert_eq!(
+            vec![Identifier("foobar"), Identifier("v_a_z1234"), Discard,],
+            tokenizer.collect::<Vec<Token>>(),
+        );
+    }
+
+    #[test]
+    fn test_keywords() {
+        use crate::lexer::Token::*;
+
+        let input = "true\nfalse\nif else while for continue break return";
+        let tokenizer = Tokenizer::new(input);
+        assert_eq!(
+            vec![True, False, If, Else, While, For, Continue, Break, Return,],
+            tokenizer.collect::<Vec<Token>>(),
+        );
+    }
+
+    #[test]
+    fn test_symbols() {
+        use crate::lexer::Token::*;
+
+        let input = "= /= > >= < <= +-*/^%,.(){}[]";
+        let tokenizer = Tokenizer::new(input);
+        assert_eq!(
             vec![
-                Identifier("foobar"),
-                Identifier("v_a_z1234"),
-                Discard,
+                Eq,
+                Neq,
+                Gt,
+                Gte,
+                Lt,
+                Lte,
+                Plus,
+                Minus,
+                Star,
+                Slash,
+                Caret,
+                Percent,
+                Comma,
+                Dot,
+                OpenParen,
+                CloseParen,
+                OpenBrace,
+                CloseBrace,
+                OpenBracket,
+                CloseBracket,
             ],
             tokenizer.collect::<Vec<Token>>(),
         );
+    }
+
+    #[test]
+    fn test_string_literal() {
+        use crate::lexer::Token::StringLit;
+
+        let input = r#""this is a string"
+        "string with escaped '\"\\\n\r\t\0'"
+        "#;
+        let tokenizer = Tokenizer::new(input);
+        assert_eq!(
+            vec![
+                StringLit("this is a string"),
+                StringLit("string with escaped '\\\"\\\\\\n\\r\\t\\0'")
+            ],
+            tokenizer.collect::<Vec<Token>>(),
+        );
+
+        let input = r#"
+"invalid escaped char: \v"
+        "#;
+        let mut tokenizer = Tokenizer::new(input);
+        assert_eq!(
+            StringLit("invalid escaped char: \\v"),
+            tokenizer.next().unwrap(),
+        );
+
+        assert_eq!(
+            LexerError::new(
+                2,
+                r#""invalid escaped char: \v"#.len(),
+                LexerErrorKind::InvalidEscapedChar
+            ),
+            tokenizer.errors[0],
+        );
+    }
+
+    #[test]
+    fn test_char_literal() {
+        use crate::lexer::Token::CharLit;
+
+        let input = "'c''a''b'";
+        let tokenizer = Tokenizer::new(input);
+        assert_eq!(
+            vec![
+                CharLit("c"),
+                CharLit("a"),
+                CharLit("b"),
+            ],
+            tokenizer.collect::<Vec<Token>>(),
+        );
+
+        let input = "'' '";
+        let mut tokenizer = Tokenizer::new(input);
+        while let Some(_) = tokenizer.next() {}
+
+        assert_eq!(
+            vec![
+                LexerError::new(1, 2, LexerErrorKind::EmptyCharLiteral),
+                LexerError::new(1, 4, LexerErrorKind::UnclosedCharLiteral),
+            ],
+            tokenizer.errors
+        )
+    }
+
+    #[test]
+    fn test_number_literal() {
+        use super::Token::*;
+        let input = "01234 123.0123 123e-1 245.123E+2";
+        let tokenizer = Tokenizer::new(input);
+        assert_eq!(
+            vec![
+                IntLit("01234"),
+                FloatLit("123.0123"),
+                FloatLit("123e-1"),
+                FloatLit("245.123E+2"),
+            ],
+            tokenizer.collect::<Vec<Token>>(),
+        )
     }
 }
