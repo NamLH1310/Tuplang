@@ -86,12 +86,9 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    #[inline(always)]
     fn peek(&self) -> Option<char> {
         self.chars.clone().next()
-    }
-
-    fn is_eof(&self) -> bool {
-        self.pos >= self.src.len()
     }
 
     fn bump(&mut self) -> Option<char> {
@@ -118,7 +115,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn bump_while(&mut self, predicate: impl Fn(char) -> bool) {
-        while !self.is_eof() && predicate(self.peek().unwrap()) {
+        while self.pos < self.src.len() && predicate(self.peek().unwrap()) {
             self.bump();
         }
     }
