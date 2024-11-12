@@ -5,7 +5,7 @@ const DOUBLE_QUOTE: char = '"';
 const BACKSLASH: char = '\\';
 
 #[derive(Debug, PartialEq)]
-enum Token<'a> {
+pub(crate) enum Token<'a> {
     Identifier(&'a str),
     IntLit(&'a str),
     FloatLit(&'a str),
@@ -27,6 +27,12 @@ enum Token<'a> {
     Gte,
     Lt,
     Lte,
+    Assign,
+    Colon,
+    Walrus,
+    Or,
+    Tilda,
+    And,
     Plus,
     Minus,
     Star,
@@ -43,6 +49,7 @@ enum Token<'a> {
     CloseBracket,
     Skip,
     Illegal,
+    Eof,
 }
 
 impl<'a> From<&'a str> for Token<'a> {
@@ -65,7 +72,7 @@ impl<'a> From<&'a str> for Token<'a> {
 }
 
 #[derive(Debug)]
-struct Tokenizer<'a> {
+pub(crate) struct Tokenizer<'a> {
     line: usize,
     col: usize,
     pos: usize,
@@ -75,7 +82,7 @@ struct Tokenizer<'a> {
 }
 
 impl<'a> Tokenizer<'a> {
-    fn new(src: &'a str) -> Self {
+    pub(crate) fn new(src: &'a str) -> Self {
         Tokenizer {
             line: 1,
             col: 0,
@@ -127,18 +134,14 @@ impl<'a> Tokenizer<'a> {
 
         self.bump_while(|c| c.is_ascii_digit());
 
-        let scan_fraction = self
-            .peek()
-            .map_or(false, |c| c == '.');
+        let scan_fraction = self.peek().map_or(false, |c| c == '.');
 
         if scan_fraction {
             self.bump();
             self.bump_while(|c| c.is_ascii_digit());
         }
 
-        let scan_exp = self
-            .peek()
-            .map_or(false, |c| c == 'e' || c == 'E');
+        let scan_exp = self.peek().map_or(false, |c| c == 'e' || c == 'E');
 
         if scan_exp {
             self.bump();
@@ -186,7 +189,11 @@ impl<'a> Tokenizer<'a> {
         };
 
         if next_char == SINGLE_QUOTE {
-            self.errors.push(LexerError::new(self.line, self.col, LexerErrorKind::EmptyCharLiteral));
+            self.errors.push(LexerError::new(
+                self.line,
+                self.col,
+                LexerErrorKind::EmptyCharLiteral,
+            ));
             return Some(Token::CharLit(""));
         }
 
@@ -290,7 +297,12 @@ impl<'a> Iterator for Tokenizer<'a> {
             },
             '<' => match self.peek() {
                 Some('=') => Lte,
+                Some('-') => Assign,
                 _ => Lt,
+            },
+            ':' => match self.peek() {
+                Some('=') => Walrus,
+                _ => Colon,
             },
             '/' => match self.peek() {
                 Some('/') => {
@@ -300,6 +312,9 @@ impl<'a> Iterator for Tokenizer<'a> {
                 Some('=') => Neq,
                 _ => Slash,
             },
+            '~' => Tilda,
+            '&' => And,
+            '|' => Or,
             '+' => Plus,
             '-' => Minus,
             '*' => Star,
@@ -325,7 +340,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                     IllegalLiteral(&self.src[offset..self.pos]),
                 ));
             }
-            Gte | Lte | Neq => {
+            Gte | Lte | Neq | Assign | Walrus => {
                 self.bump();
                 return Some(token);
             }
@@ -462,11 +477,7 @@ mod tests {
         let input = "'c''a''b'";
         let tokenizer = Tokenizer::new(input);
         assert_eq!(
-            vec![
-                CharLit("c"),
-                CharLit("a"),
-                CharLit("b"),
-            ],
+            vec![CharLit("c"), CharLit("a"), CharLit("b"),],
             tokenizer.collect::<Vec<Token>>(),
         );
 

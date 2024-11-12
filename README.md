@@ -1,3 +1,7 @@
+# Introduction
+
+WIP hobby programming language
+
 # Build
 
 ```shell
