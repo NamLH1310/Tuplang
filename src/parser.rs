@@ -58,11 +58,11 @@ impl<'a> Parser<'a> {
         self.next_token = self.tokenizer.next().unwrap_or(Token::Eof);
     }
 
-    fn parse_leaf(&mut self) -> Expr {
+    fn parse_leaf(&mut self) -> Option<Expr> {
         if self.next_token.is_leaf() {
             let expr = Expr::from(&self.next_token);
             self.advance();
-            return expr;
+            return Some(expr);
         }
 
         match self.next_token {
@@ -70,26 +70,25 @@ impl<'a> Parser<'a> {
                 let op = Operator::from(&self.next_token);
                 self.advance();
                 if self.next_token.is_leaf() {
-                    let expr = self.parse_leaf();
-                    Expr::Unary {
+                    let expr = self.parse_leaf().unwrap();
+                    Some(Expr::Unary {
                         right: Box::new(expr),
                         op,
-                    }
+                    })
                 } else {
-                    panic!("expect expr, got: {:?}", self.next_token);
+                    None
                 }
             }
             Token::OpenParen => {
                 self.advance();
-                let expr = self.parse_expression();
-                if matches!(self.next_token, Token::CloseParen) {
-                    self.advance();
-                } else {
-                    todo!("report unclosed parenthesis error error");
+                let expr = self.parse_expression()?;
+                match self.next_token {
+                    Token::CloseParen => self.advance(),
+                    _ => todo!("report unclosed parenthesis error error")
                 }
-                expr
+                Some(expr)
             }
-            _ => panic!("expect - or ~, got: {:?}", self.next_token),
+            _ => None,
         }
     }
 
@@ -106,6 +105,11 @@ impl<'a> Parser<'a> {
             let op = Operator::from(&self.next_token);
             self.advance();
             let right = self.parse_expression_prime(next_precedence);
+            if right.is_none() {
+                return (left, true)
+            }
+            let right = right.unwrap();
+
             let node = Expr::Binary {
                 left: Box::new(left),
                 right: Box::new(right),
@@ -116,19 +120,24 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_expression_prime(&mut self, min_precedence: i8) -> Expr {
-        let mut left = self.parse_leaf();
+    fn parse_expression_prime(&mut self, min_precedence: i8) -> Option<Expr> {
+        let left = self.parse_leaf();
+        if left.is_none() {
+            return None;
+        }
+
+        let mut left = left.unwrap();
 
         loop {
             let (node, should_return) = self.parse_increasing_precedence(left, min_precedence);
             if should_return {
-                return node;
+                return Some(node);
             }
             left = node;
         }
     }
 
-    fn parse_expression(&mut self) -> Expr {
+    fn parse_expression(&mut self) -> Option<Expr> {
         self.parse_expression_prime(-1)
     }
 }
@@ -139,13 +148,13 @@ mod tests {
     #[test]
     fn test_parse_leaf() {
         let mut parser = Parser::new("1 - 2");
-        assert_eq!(Expr::Int(1), parser.parse_leaf());
+        assert_eq!(Expr::Int(1), parser.parse_leaf().unwrap());
         assert_eq!(
             Expr::Unary {
                 right: Box::new(Expr::Int(2)),
                 op: Operator::Subtract
             },
-            parser.parse_leaf()
+            parser.parse_leaf().unwrap()
         );
     }
 
@@ -154,7 +163,7 @@ mod tests {
         use crate::ast::Expr::*;
 
         let mut parser = Parser::new("2 - -1");
-        let tree = parser.parse_expression();
+        let tree = parser.parse_expression().unwrap();
         assert_eq!(Binary {
             left: Box::new(Int(2)),
             right: Box::new(Unary {
@@ -165,7 +174,7 @@ mod tests {
         }, tree);
 
         let mut parser = Parser::new("a > b + c * d + e");
-        let tree = parser.parse_expression();
+        let tree = parser.parse_expression().unwrap();
         assert_eq!(Binary {
             left: Box::new(Id("a".to_owned())),
             right: Box::new(Binary {
@@ -185,7 +194,7 @@ mod tests {
         }, tree);
 
         let mut parser = Parser::new("a > (b + c) * (d + e)");
-        let tree = parser.parse_expression();
+        let tree = parser.parse_expression().unwrap();
         assert_eq!(Binary {
             left: Box::new(Id("a".to_owned())),
             right: Box::new(Binary {
@@ -203,7 +212,5 @@ mod tests {
             }),
             op: Operator::Gt,
         }, tree);
-
-        println!("{:#?}", tree);
     }
 }
