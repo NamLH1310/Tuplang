@@ -158,5 +158,7 @@ pub(crate) enum Expr {
     Int(isize),
     Float64(f64),
     Float32(f32),
+    Empty,
+    Tuple(Vec<Expr>),
     Unknown,
 }

@@ -69,24 +69,55 @@ impl<'a> Parser<'a> {
             Token::Minus | Token::Tilda => {
                 let op = Operator::from(&self.next_token);
                 self.advance();
-                if self.next_token.is_leaf() {
-                    let expr = self.parse_leaf().unwrap();
-                    Some(Expr::Unary {
-                        right: Box::new(expr),
-                        op,
-                    })
-                } else {
-                    None
+                let expr = self.parse_expression();
+                if expr.is_none() {
+                    todo!("report error invalid next token: expect expression");
                 }
+                Some(Expr::Unary {
+                    right: Box::new(expr.unwrap()),
+                    op,
+                })
             }
             Token::OpenParen => {
                 self.advance();
-                let expr = self.parse_expression()?;
+                let expr = self.parse_expression();
+
                 match self.next_token {
-                    Token::CloseParen => self.advance(),
+                    Token::CloseParen => {
+                        self.advance();
+                        if expr.is_none() {
+                            Some(Expr::Empty)
+                        } else {
+                            expr
+                        }
+                    },
+                    Token::Comma => {
+                        self.advance();
+                        if expr.is_none() {
+                            todo!("report error: expect '(' or <expr>");
+                        }
+
+                        let mut exprs = vec![expr.unwrap()];
+
+                        while let Some(expr) = self.parse_expression() {
+                            match self.next_token {
+                                Token::Comma => {
+                                    exprs.push(expr);
+                                    self.advance();
+                                },
+                                Token::CloseParen => {
+                                    exprs.push(expr);
+                                    self.advance();
+                                    break;
+                                },
+                                _ => todo!()
+                            }
+                        }
+
+                        Some(Expr::Tuple(exprs))
+                    }
                     _ => todo!("report unclosed parenthesis error error")
                 }
-                Some(expr)
             }
             _ => None,
         }
@@ -137,6 +168,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[inline(always)]
     fn parse_expression(&mut self) -> Option<Expr> {
         self.parse_expression_prime(-1)
     }
@@ -212,5 +244,25 @@ mod tests {
             }),
             op: Operator::Gt,
         }, tree);
+
+        let mut parser = Parser::new("()");
+        let tree = parser.parse_expression().unwrap();
+        assert_eq!(Empty, tree);
+
+        let mut parser = Parser::new("(123)");
+        let tree = parser.parse_expression().unwrap();
+        assert_eq!(Int(123), tree);
+
+        let mut parser = Parser::new("(123, 456)");
+        let tree = parser.parse_expression().unwrap();
+        assert_eq!(Tuple(vec![Int(123), Int(456)]), tree);
+
+        let mut parser = Parser::new("(123, (a + b))");
+        let tree = parser.parse_expression().unwrap();
+        assert_eq!(Tuple(vec![Int(123), Binary{
+            left: Box::new(Id("a".to_owned())),
+            right: Box::new(Id("b".to_owned())),
+            op: Operator::Add,
+        }]), tree);
     }
 }
