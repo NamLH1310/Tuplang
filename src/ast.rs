@@ -151,6 +151,7 @@ pub(crate) enum Expr {
         left: Box<Expr>,
         index: Box<Expr>,
     },
+    FuncCall(Vec<Expr>),
     String(String),
     Char(char),
     Id(String),
