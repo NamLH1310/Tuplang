@@ -3,21 +3,27 @@ use crate::lexer::Token;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 
-enum Type {
+#[derive(Debug, PartialEq)]
+pub(crate) enum Type {
     Int32,
     Int64,
     Float32,
     Float64,
+    String,
+    Char,
+    UserDefine(String),
     AnonymousTuple(Vec<Type>),
     NamedTuple(HashMap<String, Type>),
 }
 
+#[derive(Debug, PartialEq)]
 struct Param {
     name: String,
     typ: Type,
 }
 
-enum Decl {
+#[derive(Debug, PartialEq)]
+pub(crate) enum Decl {
     Var {
         name: String,
         expr: Expr,
@@ -34,11 +40,12 @@ enum Decl {
     },
     Type {
         name: String,
-        d_type: Type,
+        typ: Type,
     },
 }
 
-enum Stmt {
+#[derive(Debug, PartialEq)]
+pub(crate) enum Stmt {
     Assign(String, Expr),
     Return(Expr),
     Expr(Expr),
@@ -84,6 +91,19 @@ pub(crate) enum Operator {
     Unknown,
 }
 
+impl From<&Token<'_>> for Type {
+    fn from(token: &Token) -> Self {
+        use crate::lexer::Token::*;
+        match token {
+            Int => Self::Int32,
+            Float32 => Self::Float32,
+            Float64 => Self::Float64,
+            String => Self::String,
+            Char => Self::Char,
+            _ => panic!("unknown type"),
+        }
+    }
+}
 impl From<&Token<'_>> for Operator {
     fn from(token: &Token) -> Self {
         use crate::lexer::Token::*;
