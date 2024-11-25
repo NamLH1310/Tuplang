@@ -1,5 +1,4 @@
-use crate::ast::Expr::FuncCall;
-use crate::ast::{Decl, Expr, Operator, Stmt, Type};
+use crate::ast::{Decl, Expr, Operator, Stmt, Stmts, Type};
 use crate::lexer::{Token, Tokenizer};
 use std::boxed::Box;
 use std::collections::HashMap;
@@ -47,6 +46,11 @@ impl Token<'_> {
     }
 }
 
+enum Context {
+    Loop,
+    Block,
+}
+
 pub(crate) struct Parser<'a> {
     tokenizer: Tokenizer<'a>,
     next_token: Token<'a>,
@@ -79,7 +83,7 @@ impl<'a> Parser<'a> {
                         }
                         Token::Colon => {
                             self.advance();
-                            self.parse_func_decl()
+                            self.parse_func_decl(id.to_owned())
                         }
                         _ => {
                             eprintln!("Expect :=, :, got {:?}", &self.next_token);
@@ -150,7 +154,7 @@ impl<'a> Parser<'a> {
         Type::NamedTuple(map)
     }
 
-    fn parse_anonymous_type(&mut self, mut vec: Vec<Type>) -> Type {
+    fn parse_anonymous_tuple_type(&mut self, mut vec: Vec<Type>) -> Type {
         loop {
             self.parse_type().map(|typ| vec.push(typ));
             match self.next_token {
@@ -160,7 +164,11 @@ impl<'a> Parser<'a> {
             }
         }
         self.match_token(Token::CloseParen);
-        Type::AnonymousTuple(vec)
+        if vec.len() > 0 {
+            Type::AnonymousTuple(vec)
+        } else {
+            Type::EmptyTuple
+        }
     }
 
     fn parse_type(&mut self) -> Option<Type> {
@@ -183,18 +191,18 @@ impl<'a> Parser<'a> {
                             Token::Comma => {
                                 self.advance();
                                 let v = vec![Type::UserDefine(id.to_owned())];
-                                Some(self.parse_anonymous_type(v))
+                                Some(self.parse_anonymous_tuple_type(v))
                             }
                             _ => None,
                         }
                     }
                     Token::OpenParen => self.parse_type().map(|typ| {
                         let v = vec![typ];
-                        self.parse_anonymous_type(v)
+                        self.parse_anonymous_tuple_type(v)
                     }),
                     Token::CloseParen => {
                         self.advance();
-                        Some(Type::AnonymousTuple(vec![]))
+                        Some(Type::EmptyTuple)
                     }
                     ref token if token.is_builtin_type() => {
                         let mut v = vec![Type::from(token)];
@@ -202,7 +210,7 @@ impl<'a> Parser<'a> {
                         if matches!(self.next_token, Token::Comma) {
                             self.advance();
                         }
-                        Some(self.parse_anonymous_type(v))
+                        Some(self.parse_anonymous_tuple_type(v))
                     }
                     _ => None,
                 };
@@ -225,8 +233,70 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_func_decl(&mut self) -> Option<Decl> {
-        todo!()
+    fn parse_func_decl(&mut self, name: String) -> Option<Decl> {
+        self.match_token(Token::OpenParen);
+
+        let Type::NamedTuple(params) = self.parse_named_tuple_type(HashMap::new())
+        else { unreachable!() };
+
+
+        let rtype = match self.next_token {
+            Token::RightArrow => {
+                self.advance();
+                self.parse_type().unwrap_or_else(|| {
+                    eprintln!("Expect <return_type>");
+                    Type::EmptyTuple
+                })
+            }
+            _ => Type::EmptyTuple
+        };
+
+        Some(Decl::Func {
+            name,
+            params,
+            rtype,
+            body: self.parse_block_stmt(Context::Block),
+        })
+    }
+
+    fn parse_return_stmt(&mut self) -> Stmt {
+        self.match_token(Token::Return);
+        let expr = self.parse_expression().unwrap_or(Expr::Empty);
+        Stmt::Return(expr)
+    }
+
+    fn parse_block_stmt(&mut self, ctx: Context) -> Stmts {
+        self.match_token(Token::OpenBrace);
+
+        let mut stmts = Vec::<Stmt>::new();
+
+        loop {
+            let stmt = match self.next_token {
+                Token::If => todo!(),
+                Token::For => todo!(),
+                Token::While => todo!(),
+                Token::Return => self.parse_return_stmt(),
+                Token::Break => todo!(),
+                Token::Continue => todo!(),
+                Token::Identifier(id) => {
+                    match self.parse_var_decl(id.to_owned()) {
+                        Some(decl) => Stmt::Decl(decl),
+                        _ => continue
+                    }
+                }
+                Token::OpenBrace => Stmt::Block(self.parse_block_stmt(Context::Block)),
+                Token::CloseBrace => break,
+                _ => {
+                    self.advance();
+                    continue;
+                }
+            };
+            stmts.push(stmt);
+        }
+
+        self.match_token(Token::CloseBrace);
+
+        stmts
     }
 
     fn parse_var_decl(&mut self, name: String) -> Option<Decl> {
@@ -239,15 +309,15 @@ impl<'a> Parser<'a> {
             self.advance();
             if matches!(&expr, Expr::Id(_)) && matches!(&self.next_token, Token::OpenParen) {
                 return self.parse_leaf().map(|expr| match expr {
-                    Expr::Empty => FuncCall(vec![]),
-                    Expr::Tuple(exprs) => FuncCall(exprs),
+                    Expr::Empty => Expr::FuncCall(vec![]),
+                    Expr::Tuple(exprs) => Expr::FuncCall(exprs),
                     Expr::String(_)
                     | Expr::Char(_)
                     | Expr::Id(_)
                     | Expr::Bool(_)
                     | Expr::Int(_)
                     | Expr::Float32(_)
-                    | Expr::Float64(_) => FuncCall(vec![expr]),
+                    | Expr::Float64(_) => Expr::FuncCall(vec![expr]),
                     _ => expr,
                 });
             }
@@ -581,7 +651,7 @@ mod tests {
                 },
                 Decl::Type {
                     name: new_type_id.clone(),
-                    typ: Type::AnonymousTuple(vec![]),
+                    typ: Type::EmptyTuple,
                 },
                 Decl::Type {
                     name: new_type_id.clone(),
@@ -631,6 +701,58 @@ mod tests {
                         ])
                     ),])),
                 },
+            ],
+            decls,
+        );
+    }
+
+    #[test]
+    fn parse_func_decl() {
+        let mut parser = Parser::new(r#"
+        func1: (a: Int) -> () {}
+        func1: (a: Int) {}
+        func1: () -> Float32 {}
+        func1: (b: (Int, String), c: (d: Char, e: OtherType)) -> Float32 {}
+
+        "#);
+        let decls = parser.parse_program();
+
+        assert_eq!(
+            vec![
+                Decl::Func {
+                    name: "func1".to_owned(),
+                    params: HashMap::from([
+                        ("a".to_owned(), Type::Int32),
+                    ]),
+                    rtype: Type::EmptyTuple,
+                    body: vec![],
+                },
+                Decl::Func {
+                    name: "func1".to_owned(),
+                    params: HashMap::from([
+                        ("a".to_owned(), Type::Int32),
+                    ]),
+                    rtype: Type::EmptyTuple,
+                    body: vec![],
+                },
+                Decl::Func {
+                    name: "func1".to_owned(),
+                    params: HashMap::from([]),
+                    rtype: Type::Float32,
+                    body: vec![],
+                },
+                Decl::Func {
+                    name: "func1".to_owned(),
+                    params: HashMap::from([
+                        ("b".to_owned(), Type::AnonymousTuple(vec![Type::Int32, Type::String])),
+                        ("c".to_owned(), Type::NamedTuple(HashMap::from([
+                            ("d".to_owned(), Type::Char),
+                            ("e".to_owned(), Type::UserDefine("OtherType".to_owned())),
+                        ]))),
+                    ]),
+                    rtype: Type::Float32,
+                    body: vec![],
+                }
             ],
             decls,
         );

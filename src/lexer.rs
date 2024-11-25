@@ -1,4 +1,5 @@
 use std::str::Chars;
+use crate::lexer::Token::RightArrow;
 
 const SINGLE_QUOTE: char = '\'';
 const DOUBLE_QUOTE: char = '"';
@@ -33,6 +34,7 @@ pub(crate) enum Token<'a> {
     Gte,
     Lt,
     Lte,
+    RightArrow,
     Assign,
     Colon,
     Walrus,
@@ -328,7 +330,10 @@ impl<'a> Iterator for Tokenizer<'a> {
             '&' => And,
             '|' => Or,
             '+' => Plus,
-            '-' => Minus,
+            '-' => match self.peek() {
+                Some('>') => RightArrow,
+                _ => Minus,
+            }
             '*' => Star,
             '^' => Caret,
             '%' => Percent,
@@ -352,7 +357,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                     IllegalLiteral(&self.src[offset..self.pos]),
                 ));
             }
-            Gte | Lte | Neq | Assign | Walrus => {
+            Gte | Lte | Neq | Assign | Walrus | RightArrow => {
                 self.bump();
                 return Some(token);
             }

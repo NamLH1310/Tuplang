@@ -11,17 +11,11 @@ pub(crate) enum Type {
     Float64,
     String,
     Char,
+    EmptyTuple,
     UserDefine(String),
     AnonymousTuple(Vec<Type>),
     NamedTuple(HashMap<String, Type>),
 }
-
-#[derive(Debug, PartialEq)]
-struct Param {
-    name: String,
-    typ: Type,
-}
-
 #[derive(Debug, PartialEq)]
 pub(crate) enum Decl {
     Var {
@@ -34,7 +28,7 @@ pub(crate) enum Decl {
     },
     Func {
         name: String,
-        params: Vec<Param>,
+        params: HashMap<String, Type>,
         rtype: Type,
         body: Stmts,
     },
@@ -46,6 +40,7 @@ pub(crate) enum Decl {
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum Stmt {
+    Decl(Decl),
     Assign(String, Expr),
     Return(Expr),
     Expr(Expr),
@@ -69,7 +64,7 @@ pub(crate) enum Stmt {
     Continue,
 }
 
-type Stmts = Vec<Stmt>;
+pub(crate) type Stmts = Vec<Stmt>;
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum Operator {
